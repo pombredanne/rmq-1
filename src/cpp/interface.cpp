@@ -104,9 +104,24 @@ extern "C" {
     return REAL(x)[i];
   }
 
+  SEXP GetAttribSexp(SEXP x) {
+    return ATTRIB(x);
+  }
+
+  void SetAttribSexp(SEXP x, SEXP y) {
+    SET_ATTRIB(x, y);
+  }
 
   int get_int_elt(SEXP x, int i) {
     return INTEGER(x)[i];
+  }
+
+  SEXP MyCAR(SEXP e) {
+    return CAR(e);
+  }
+
+  SEXP MyCDR(SEXP e) {
+    return CDR(e);
   }
 
   void callInitEmbeddedR() {

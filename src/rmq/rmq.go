@@ -500,6 +500,59 @@ func decodeMsgpackToR(reply []byte) C.SEXP {
 const FLT_RADIX = 2
 const DBL_MANT_DIG = 53
 
+//
+// decodeIntoPairlist() should leave its returned SEXP protected, unless it is R_NilValue.
+//
+func decodeIntoPairlist(r interface{}, depth int) C.SEXP {
+	m, ok := r.(map[string]interface{})
+	if !ok {
+		C.ReportErrorToR_NoReturn(C.CString("decodeIntoPairlist() error: ___000___attributes " +
+			"element was not a map[string]interface{} type"))
+	}
+
+	if len(m) == 0 {
+		return C.R_NilValue
+	}
+
+	lenm := len(m)
+	names := make([]string, lenm)
+	values := make([]interface{}, lenm)
+	i := 0
+	for k, v := range m {
+		names[i] = k
+		values[i] = v
+		i++
+	}
+
+	// now turn into pairlist
+	// fetch a list of the right length, with nil in all CAR positions except the last.
+	pairlist := C.allocList(C.int(lenm))
+	C.Rf_protect(pairlist)
+
+	// set the names as an attribute on the first cons cell.
+	sexpNames := decodeHelper(names, depth+1)
+	// sexpNames will be unprotected, since depth > 0
+	C.Rf_protect(sexpNames)
+	C.Rf_setAttrib(pairlist, C.R_NamesSymbol, sexpNames)
+	C.Rf_unprotect(1) // unprotect sexpNames
+
+	// now fill in the CAR of the cons cells in the pairlist with values
+	next := pairlist
+	for i := 0; i < lenm; i++ {
+		sexpVali := decodeHelper(values[i], depth+1)
+		// sexpVai will be unprotected since depth > 0
+		C.SETCAR(next, sexpVali)
+		next = C.MyCDR(next)
+	}
+	return pairlist
+}
+
+// When returning from depth 0, decodeHelper should leave
+// the returned SEXP protected, unless
+// we are returning R_NilValue. If depth > 0, it is assumed
+// that we are making a recursive call for immediate incorporation
+// of the value into an already protected structure, and hence
+// we can and should leave the value s unprotected when depth != 0.
 func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 
 	VPrintf("decodeHelper() at depth %d, decoded type is %T\n", depth, r)
@@ -519,6 +572,29 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 	case int64:
 		VPrintf("depth %d found int64 case: val = %#v\n", depth, val)
 		return C.Rf_ScalarReal(C.double(float64(val)))
+
+	case []string:
+		VPrintf("depth %d found []string case: val = %#v\n", depth, val)
+
+		lenval := len(val)
+		if lenval == 0 {
+			emptyvec := C.allocVector(C.NILSXP, C.R_xlen_t(0))
+
+			if depth == 0 {
+				C.Rf_protect(emptyvec)
+			}
+			return emptyvec
+		}
+
+		stringSlice := C.allocVector(C.STRSXP, C.R_xlen_t(lenval))
+		C.Rf_protect(stringSlice)
+		for i := range val {
+			C.SET_STRING_ELT(stringSlice, C.R_xlen_t(i), C.mkChar(C.CString(val[i])))
+		}
+		if depth != 0 {
+			C.Rf_unprotect(1) // unprotect for stringSlice, now that we are returning it to a recursive call
+		}
+		return stringSlice
 
 	case []interface{}:
 		VPrintf("depth %d found []interface{} case: val = %#v\n", depth, val)
@@ -549,7 +625,7 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 					C.SET_STRING_ELT(stringSlice, C.R_xlen_t(i), C.mkChar(C.CString(val[i].(string))))
 				}
 				if depth != 0 {
-					C.Rf_unprotect(1) // unprotect for stringSlice, now that we are returning it
+					C.Rf_unprotect(1) // unprotect for stringSlice, now that we are returning it to a recursive call
 				}
 				return stringSlice
 
@@ -632,6 +708,25 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 		return intslice
 
 	case map[string]interface{}:
+
+		//		installAttrib(vec, R_ClassSymbol, klass);
+
+		// check for our special map that encodes attributes: a map of precisely size 2
+		// that has exactly keys "___000___value" and "___000___attributes".
+		isAttr, attr, value := isAttributeValueMap(val)
+		if isAttr {
+			v := decodeHelper(value, depth+1)
+			// v will be unprotected, since depth > 0
+			if v != C.R_NilValue {
+				C.Rf_protect(v)
+			}
+			a := decodeIntoPairlist(attr, depth+1)
+			C.SET_ATTRIB(v, a)
+			if a != C.R_NilValue {
+				C.Rf_unprotect(1) // unprotect a
+			}
+			return v
+		}
 
 		s = C.allocVector(C.VECSXP, C.R_xlen_t(len(val)))
 		if depth == 0 {
@@ -759,12 +854,24 @@ func encodeRIntoMsgpack(s C.SEXP) []byte {
 // string vectors, and recursively defined list elements.
 // If list elements are named, the named list is turned
 // into a map in Go.
-func SexpToIface(s C.SEXP) interface{} {
+func SexpToIface(s C.SEXP) (ret interface{}) {
 
 	n := int(C.Rf_xlength(s))
 	if n == 0 {
 		return nil // drops type info. Meh.
 	}
+
+	attrib := C.GetAttribSexp(s)
+	fmt.Printf("  777777777 starting to decode attrib into Go\n")
+	attribIface := SexpToIface(attrib)
+	fmt.Printf("  888888888 done with decoding attrib into Go\n")
+	defer func() {
+		if attribIface != nil {
+			// wrap ret, our return value, in a map with value and attributes as keys
+			fmt.Printf("attribIface = '%#v'\n", attribIface)
+			ret = map[string]interface{}{"___000___value": ret, "___000___attributes": attribIface}
+		}
+	}()
 
 	switch C.TYPEOF(s) {
 	case C.VECSXP:
@@ -840,7 +947,32 @@ func SexpToIface(s C.SEXP) interface{} {
 	case C.SYMSXP:
 		VPrintf("encodeRIntoMsgpack sees SYMSXP\n")
 	case C.LISTSXP:
-		VPrintf("encodeRIntoMsgpack sees LISTSXP\n")
+		listLen := int(C.Rf_xlength(s))
+		VPrintf("encodeRIntoMsgpack sees LISTSXP of length %d\n", listLen)
+
+		// Translate the dotted pair list into a map[string]interface{}.
+		// We'll loose the ordering, but still capture the semantics.
+		listNames := C.Rf_getAttrib(s, C.R_NamesSymbol)
+		listNamesLen := int(C.Rf_xlength(listNames))
+		VPrintf("listNamesLen = %d\n", listNamesLen)
+		next := s
+		if listNamesLen > 0 {
+			myMap := map[string]interface{}{}
+			for i := 0; i < listNamesLen; i++ {
+				attribName := C.GoString(C.get_string_elt(listNames, C.int(i)))
+
+				// only save attributes with non-nil (after decoding to Go) values, so we skip the EXTPTRSXP for example.
+				val := SexpToIface(C.MyCAR(next))
+				if val != nil {
+					myMap[attribName] = val
+				}
+				VPrintf("attribName[%d] = '%v'\n", i, attribName)
+				next = C.MyCDR(next)
+			}
+			VPrintf("VECSXP myMap = '%#v'\n", myMap)
+			return myMap
+		}
+
 	case C.CLOSXP:
 		VPrintf("encodeRIntoMsgpack sees CLOSXP\n")
 	case C.ENVSXP:
@@ -905,4 +1037,27 @@ func makeSortedSlicesFromMap(m map[string]interface{}) ([]string, []interface{})
 		val[i] = so[i].iface
 	}
 	return key, val
+}
+
+func isAttributeValueMap(m map[string]interface{}) (b bool, attr interface{}, val interface{}) {
+	if len(m) != 2 {
+		return false, nil, nil
+	}
+	var foundVal, foundAttr bool
+	for k, v := range m {
+		switch k {
+		case "___000___value":
+			foundVal = true
+			attr = v
+		case "___000___attributes":
+			foundAttr = true
+			val = v
+		default:
+			return false, nil, nil
+		}
+	}
+	if foundVal && foundAttr {
+		return true, attr, val
+	}
+	return false, nil, nil
 }

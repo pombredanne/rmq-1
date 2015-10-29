@@ -43,6 +43,12 @@ unsigned long int get_signint_handler();
 
   double get_real_elt(SEXP x, int i);
 
+  SEXP GetAttribSexp(SEXP x);
+  void SetAttribSexp(SEXP x, SEXP y);
+
+  SEXP MyCAR(SEXP e);
+  SEXP MyCDR(SEXP e);
+
   int get_int_elt(SEXP x, int i);
 
   void callInitEmbeddedR();

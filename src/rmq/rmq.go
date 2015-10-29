@@ -531,6 +531,10 @@ func decodeIntoPairlist(r interface{}, depth int) C.SEXP {
 
 	// set the names as an attribute on the first cons cell.
 	sexpNames := decodeHelper(names, depth+1)
+
+	fmt.Printf("debug, check on sexpNames:\n")
+	C.Rf_PrintValue(sexpNames) // only V1
+
 	// sexpNames will be unprotected, since depth > 0
 	C.Rf_protect(sexpNames)
 	C.Rf_setAttrib(pairlist, C.R_NamesSymbol, sexpNames)
@@ -540,7 +544,7 @@ func decodeIntoPairlist(r interface{}, depth int) C.SEXP {
 	next := pairlist
 	for i := 0; i < lenm; i++ {
 		sexpVali := decodeHelper(values[i], depth+1)
-		// sexpVai will be unprotected since depth > 0
+		// sexpVali will be unprotected since depth > 0
 		C.SETCAR(next, sexpVali)
 		next = C.MyCDR(next)
 	}
@@ -721,6 +725,13 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 				C.Rf_protect(v)
 			}
 			a := decodeIntoPairlist(attr, depth+1)
+
+			fmt.Printf("debug, check on decoding of value into v:\n")
+			C.Rf_PrintValue(v)
+
+			fmt.Printf("debug, check on decoding of attr into a:\n")
+			C.Rf_PrintValue(a)
+
 			C.SET_ATTRIB(v, a)
 			if a != C.R_NilValue {
 				C.Rf_unprotect(1) // unprotect a
@@ -1048,10 +1059,10 @@ func isAttributeValueMap(m map[string]interface{}) (b bool, attr interface{}, va
 		switch k {
 		case "___000___value":
 			foundVal = true
-			attr = v
+			val = v
 		case "___000___attributes":
 			foundAttr = true
-			val = v
+			attr = v
 		default:
 			return false, nil, nil
 		}

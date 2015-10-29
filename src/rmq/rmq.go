@@ -31,6 +31,11 @@ import (
 	"github.com/ugorji/go/codec"
 )
 
+// experiments with encoding R attributes into msgpack don't
+// very good, but perhaps someone in the future wants to pick it
+// up and make it better.
+const attributeExperimentOn = false
+
 // restore R's signal handler for SIGINT (and all others)
 func init() {
 	C.restore_all_starting_signal_handlers()
@@ -712,30 +717,30 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 
 	case map[string]interface{}:
 
-		//		installAttrib(vec, R_ClassSymbol, klass);
+		if attributeExperimentOn {
+			// check for our special map that encodes attributes: a map of precisely size 2
+			// that has exactly keys "___000___value" and "___000___attributes".
+			isAttr, attr, value := isAttributeValueMap(val)
+			if isAttr {
+				v := decodeHelper(value, depth+1)
+				// v will be unprotected, since depth > 0
+				if v != C.R_NilValue {
+					C.Rf_protect(v)
+				}
+				a := decodeIntoPairlist(attr, depth+1)
 
-		// check for our special map that encodes attributes: a map of precisely size 2
-		// that has exactly keys "___000___value" and "___000___attributes".
-		isAttr, attr, value := isAttributeValueMap(val)
-		if isAttr {
-			v := decodeHelper(value, depth+1)
-			// v will be unprotected, since depth > 0
-			if v != C.R_NilValue {
-				C.Rf_protect(v)
+				//fmt.Printf("debug, check on decoding of value into v:\n")
+				//C.Rf_PrintValue(v)
+				//
+				//fmt.Printf("debug, check on decoding of attr into a:\n")
+				//C.Rf_PrintValue(a)
+
+				C.SET_ATTRIB(v, a)
+				if a != C.R_NilValue {
+					C.Rf_unprotect(1) // unprotect a
+				}
+				return v
 			}
-			a := decodeIntoPairlist(attr, depth+1)
-
-			//fmt.Printf("debug, check on decoding of value into v:\n")
-			//C.Rf_PrintValue(v)
-			//
-			//fmt.Printf("debug, check on decoding of attr into a:\n")
-			//C.Rf_PrintValue(a)
-
-			C.SET_ATTRIB(v, a)
-			if a != C.R_NilValue {
-				C.Rf_unprotect(1) // unprotect a
-			}
-			return v
 		}
 
 		s = C.allocVector(C.VECSXP, C.R_xlen_t(len(val)))
@@ -871,15 +876,17 @@ func SexpToIface(s C.SEXP) (ret interface{}) {
 		return nil // drops type info. Meh.
 	}
 
-	attrib := C.GetAttribSexp(s)
-	attribIface := SexpToIface(attrib)
-	defer func() {
-		if attribIface != nil {
-			// wrap ret, our return value, in a map with value and attributes as keys
-			//fmt.Printf("attribIface = '%#v'\n", attribIface)
-			ret = map[string]interface{}{"___000___value": ret, "___000___attributes": attribIface}
-		}
-	}()
+	if attributeExperimentOn {
+		attrib := C.GetAttribSexp(s)
+		attribIface := SexpToIface(attrib)
+		defer func() {
+			if attribIface != nil {
+				// wrap ret, our return value, in a map with value and attributes as keys
+				//fmt.Printf("attribIface = '%#v'\n", attribIface)
+				ret = map[string]interface{}{"___000___value": ret, "___000___attributes": attribIface}
+			}
+		}()
+	}
 
 	switch C.TYPEOF(s) {
 	case C.VECSXP:

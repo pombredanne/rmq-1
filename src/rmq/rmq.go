@@ -532,8 +532,8 @@ func decodeIntoPairlist(r interface{}, depth int) C.SEXP {
 	// set the names as an attribute on the first cons cell.
 	sexpNames := decodeHelper(names, depth+1)
 
-	fmt.Printf("debug, check on sexpNames:\n")
-	C.Rf_PrintValue(sexpNames) // only V1
+	//fmt.Printf("debug, check on sexpNames:\n")
+	//C.Rf_PrintValue(sexpNames) // only V1
 
 	// sexpNames will be unprotected, since depth > 0
 	C.Rf_protect(sexpNames)
@@ -635,7 +635,6 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 
 			case int64:
 				// we can only realistically hope to preserve 53 bits worth here.
-				// todo? unless... can we require bit64 package be available somehow?
 				sxpTy = C.REALSXP
 
 				numSlice := C.allocVector(sxpTy, C.R_xlen_t(lenval))
@@ -650,7 +649,7 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 				var rhs C.double
 				for i := range val {
 					n := val[i].(int64)
-					VPrintf("n = %d, rmax = %d, n > rmax = %v\n", n, rmax, n > rmax)
+					VPrintf("n = %v, rmax = %v, n > rmax = %v\n", n, rmax, n > rmax)
 
 					if n < rmin || n > rmax {
 						naflag = true
@@ -726,11 +725,11 @@ func decodeHelper(r interface{}, depth int) (s C.SEXP) {
 			}
 			a := decodeIntoPairlist(attr, depth+1)
 
-			fmt.Printf("debug, check on decoding of value into v:\n")
-			C.Rf_PrintValue(v)
-
-			fmt.Printf("debug, check on decoding of attr into a:\n")
-			C.Rf_PrintValue(a)
+			//fmt.Printf("debug, check on decoding of value into v:\n")
+			//C.Rf_PrintValue(v)
+			//
+			//fmt.Printf("debug, check on decoding of attr into a:\n")
+			//C.Rf_PrintValue(a)
 
 			C.SET_ATTRIB(v, a)
 			if a != C.R_NilValue {
@@ -873,13 +872,11 @@ func SexpToIface(s C.SEXP) (ret interface{}) {
 	}
 
 	attrib := C.GetAttribSexp(s)
-	fmt.Printf("  777777777 starting to decode attrib into Go\n")
 	attribIface := SexpToIface(attrib)
-	fmt.Printf("  888888888 done with decoding attrib into Go\n")
 	defer func() {
 		if attribIface != nil {
 			// wrap ret, our return value, in a map with value and attributes as keys
-			fmt.Printf("attribIface = '%#v'\n", attribIface)
+			//fmt.Printf("attribIface = '%#v'\n", attribIface)
 			ret = map[string]interface{}{"___000___value": ret, "___000___attributes": attribIface}
 		}
 	}()
